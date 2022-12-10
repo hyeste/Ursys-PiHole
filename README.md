@@ -181,7 +181,7 @@ VPC (from [Amazon VPC pricing](https://www.amazonaws.cn/en/vpc/pricing/)):
 - _"There is no additional charge for using Amazon Virtual Private Cloud, aside from the normal Amazon EC2 usage charges."_
 
 
-Elastic IP address pricing within ca-central-1 (from [Elastic IP addresses](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html)):
+Elastic IP address (from [Elastic IP addresses](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html)):
 
 - _"While your instance is running, you are not charged for one Elastic IP address associated with the instance, but you are charged for any additional Elastic IP addresses associated with the instance."_
 
