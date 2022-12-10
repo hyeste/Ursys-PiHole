@@ -63,7 +63,7 @@ services:
       - "80:80/tcp"
     environment:
       TZ: 'Canada/Vancouver'
-      WEBPASSWORD: 'ursyspass'
+      WEBPASSWORD: '[my-secure-password]'
     # Volumes store your data between container upgrades
     volumes:
       - './efs/etc-pihole:/etc/pihole'
