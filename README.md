@@ -11,9 +11,9 @@ A containerised [Pi-hole  DNS sinkhole](https://github.com/pi-hole/pi-hole) arra
 
 ![Pi-hole diagram](Pihole-infrastructure.png)
 
-A regular Pi-hole user utilises this service by changing their device's preferred IPv4 DNS settings to "15.156.33.54" and "99.79.18.163". IPv6 network connectivity should be disabled if applicable. The Pi-hole blocks unwanted content (such as advertisements or web trackers) by intercepting DNS traffic and comparing requests to a blacklist containing domains known to host such content and a whitelist containing domains a user would like to resolve such content from. If a request matches a blacklisted domain, the Pi-hole returns a "fake" address that will fail to resolve. If a request does not match any blacklisted domains, or matches a blacklisted domain but also matches a whitelisted domain, it is sent to a public upstream domain to be resolved normally.
+A regular Pi-hole user utilises this service by changing their device's preferred IPv4 DNS settings to "15.156.33.54" and "99.79.18.163". IPv6 network connectivity should be disabled if applicable. The Pi-hole blocks unwanted content (such as advertisements or web trackers) by intercepting DNS traffic and comparing requests to a preset or user-configured blacklist containing domains known to host such content. Requests are also compared to a user-configured whitelist containing blacklisted domains a user would like to resolve otherwise unwanted content from. If a request matches a blacklisted domain, the Pi-hole returns a "fake" address that will fail to resolve. If a request does not match any blacklisted domains, or matches a domain present on both the blacklist and whitelist, it is sent to a public DNS server to be resolved normally.
 
-An administrative Pi-hole user configures the Pi-hole by accessing [ursys-pihole.hyeste.com](http://ursys-pihole.hyeste.com) and providing the correct password. Once logged in, settings such as the upstream domain or which domains are blacklisted or whitelisted can be changed. To prevent a user from being logged out while configuring the Pi-hole, administrative traffic is routed to the same server for ten minutes following the most recent request. Settings changed on one server are automatically copied to other servers.
+An administrative Pi-hole user configures the Pi-hole by accessing [ursys-pihole.hyeste.com](http://ursys-pihole.hyeste.com) and providing the correct password. Once logged in, settings such as the upstream DNS server or the list of blacklisted and whitelisted domains can be changed. To prevent a user from being logged out while configuring the Pi-hole, administrative traffic is routed to the same server for ten minutes following the most recent request. Settings changed on one server are automatically copied to other servers.
 
 ## Service Architecture
 
@@ -21,25 +21,17 @@ The service architecture is made up of the following components:
 
 ### Networking
 
-The VPC `pihole-ca-vpc` is hosted in ca-central-1, has the default VPC settings except for "DNS hostnames: Enabled", and is assigned the IPv4 CIDR block 10.0.0.0/16. It has two public subnets, `pihole-subnet-ca-central-1a` and `pihole-subnet-ca-central-1b`, which are located in the Availability zones ca-central-1a and ca-central-1b respectively. Both subnets have the default public subnet settings except for "Auto-assign public IPv4 address: Yes". `pihole-ca-vpc` also has the internet gateway `pihole-igw`, the route table `pihole-ca-rt`, the DHCP option set `pihole-DHCP`, the elastic IP addresses `pihole-eip-1a` and `pihole-eip-1b`, the NACL `pihole-nacl`, and the security groups `pihole-CAN-sg`, `pihole-CAN-efs-sg`, and `pihole-asg-sg`. `pihole-DHCP` and `pihole-nacl` both have default values. `pihole-ca-rt` routes local traffic to the `pihole-ca-vpc` CIDR and routes all other IPv4 traffic to `pihole-igw`.
+The VPC `pihole-ca-vpc` is hosted in ca-central-1, has the default VPC settings except for "DNS hostnames: Enabled", and is assigned the IPv4 CIDR block 10.0.0.0/16. It has two public subnets, `pihole-subnet-ca-central-1a` and `pihole-subnet-ca-central-1b`, which are located in the Availability zones ca-central-1a and ca-central-1b respectively. Both subnets have the default public subnet settings except for "Auto-assign public IPv4 address: Yes". `pihole-ca-vpc` also has the internet gateway `pihole-igw`, the route table `pihole-ca-rt`, the DHCP option set `pihole-DHCP`, the elastic IP addresses `pihole-eip-1a` and `pihole-eip-1b`, the NACL `pihole-nacl`, and the security groups `pihole-CAN-sg`, `pihole-CAN-efs-sg`, and `pihole-alb-sg`. `pihole-DHCP` and `pihole-nacl` both have default values. `pihole-ca-rt` routes local traffic to the `pihole-ca-vpc` CIDR and routes all other IPv4 traffic to `pihole-igw`.
 
 While running the Pi-hole, `pihole-ca-vpc` has eight network interfaces. Interfaces with names ending in "-1a" or "-1b" are located in `pihole-subnet-ca-central-1a` or `pihole-subnet-ca-central-1b` respectively. Two unnamed interfaces are attached to the Pi-hole instances and delete on instance termination; replacement interfaces are automatically created and attached when more instances are launched. `pihole-efs-mount-1a` and `pihole-efs-mount-1b` are attached to the EFS filesystem `pihole-nfs`. `pihole-nlb-node-1a` and `pihole-nlb-node-1b` are nodes for the network load balancer `pihole-nlb`. `pihole-alb-node-1a` and `pihole-alb-node-1b` are nodes for the application load balancer `pihole-alb`.
 
-### EC2
+### Volumes, AMI, and Network File System
 
-The Pi-hole runs from two t2.micro EC2 instances, which each run a [Pi-hole server from a Docker container](https://hub.docker.com/r/pihole/pihole/) created via Compose. Instances run the Amazon Linux 2 AMI `pihole-ami` and create volumes using the EBS snapshot `pihole-snapshot`. The EFS file system `pihole-nfs` is automatically mounted to instances and stores Pi-hole database files. Container logs are sent to CloudWatch using the Docker logging driver [awslogs](https://docs.docker.com/config/containers/logging/awslogs/).
-
-Pi-hole instances are launched through the auto-scaling group `pihole-asg`, which uses the launch template `pihole-template`. It is configured to launch t2.micro instances that run `pihole-ami`, use the key pair file `ursys.pem`, use the security group `pihole-CAN-sg`, and are assigned the IAM instance profile `pihole-logging-role`. `pihole-asg` launches instances into `pihole-ca-vpc` subnets `pihole-subnet-ca-central-1a` and `pihole-subnet-ca-central-1b`. The desired number of instances, minimum number of instances, and maximum number of instances are all two. `pihole-asg` is attached to the network load balancer `pihole-nlb` and the application load balancer `pihole-alb`.
-
-After being launched, traffic to instances is balanced by `pihole-nlb` and `pihole-alb`. `pihole-nlb` has cross-zone load balancing enabled and has two elastic IP addresses associated: `pihole-eip-1a` is attached to `pihole-nlb-node-1a` and holds the IPv4 address 15.156.33.54; `pihole-eip-1b` is attached to `pihole-nlb-node-1b` and holds 99.79.18.163. `pihole-nlb` listens for TCP traffic on port 80 as well as TCP and UDP traffic on port 53. Traffic on port 80 is forwarded to the ALB-type target group `pihole-tg-alb`, which directs traffic to `pihole-alb`. Traffic on port 53 is forwarded to the instance-type target group `pihole-tg-dns`, which is routed to instances. `pihole-alb` listens for HTTP traffic on port 80 and forwards it to `pihole-tg-http`, which is routed to instances. Sticky sessions are enabled for `pihole-tg-http` for ten minutes using the load balancer cookie type.
-
-### Volumes and Network File System
-
-Pi-hole instances use EBS volumes created from the EBS snapshot `pihole-snapshot`, which was created after running the following commands on a t2.micro EC2 instance running [Amazon Linux 2 AMI (HVM) - Kernel 5.10, SSD Volume Type](https://aws.amazon.com/marketplace/pp/prodview-zc4x2k7vt6rpu).
+Pi-hole instances run the Amazon Linux 2 AMI `pihole-ami` and use EBS volumes created from the snapshot `pihole-snapshot`. This AMI and its associated snapshot were created after running the following commands on a t2.micro EC2 instance running [Amazon Linux 2 AMI (HVM) - Kernel 5.10, SSD Volume Type](https://aws.amazon.com/marketplace/pp/prodview-zc4x2k7vt6rpu).
 
 In order, these commands perform the following functions: 
 
-- update YUM, install Docker, start the Docker service, add the default user to the "docker" group, install the Amazon EFS client, create the directory `/home/ec2-user/efs` and mount `pihole-nfs` to it, edit `/etc/fstab` to mount `pihole-nfs` on instance boot, install the Compose plugin and create associated directories, enable the Docker service to start on instance boot, create the `docker-compose.yml` build file, start the containerised Pi-hole service
+- update YUM, install Docker, start the Docker service, add the default user to the "docker" group, install the Amazon EFS client, create the directory "/home/ec2-user/efs" and mount `pihole-nfs` to it, edit "/etc/fstab" to mount `pihole-nfs` to "/home/ec2-user/efs" on instance boot, install the Compose plugin and create associated directories, enable the Docker service to start on instance boot, create the `docker-compose.yml` build file, start the containerised Pi-hole service
 
 ```
 sudo yum update -y && sudo amazon-linux-extras install docker -y && sudo service docker start && sudo usermod -a -G docker ec2-user && sudo yum install -y amazon-efs-utils && mkdir efs && sudo mount -t efs -o tls fs-0dfebd13114c47b28:/ efs && sudo echo "fs-0dfebd13114c47b28.efs.ca-central-1.amazonaws.com:/ /home/ec2-user/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" >> /etc/fstab
@@ -81,7 +73,17 @@ services:
 ' >> docker-compose.yml && docker compose up -d
 ```
 
-The containerised Pi-hole accesses volumes located in the directory `/home/ec2-user/efs`, which is the mount point for `pihole-nfs`. Changes to database files such as the domain blacklist or whitelist on one server synchronise with all other servers. `pihole-nfs` is automatically mounted to instances on boot using the EFS mount helper and the `/etc/fstab` file. 
+The containerised Pi-hole accesses volumes located in the directory "/home/ec2-user/efs", which is the mount point for `pihole-nfs`. Changes to database files such as the domain blacklist or whitelist on one server synchronise with all other servers. `pihole-nfs` is automatically mounted to instances on boot using the EFS mount helper and the "/etc/fstab" file.
+
+### EC2
+
+The Pi-hole runs from two t2.micro EC2 instances, which each run a [Pi-hole server from a Docker container](https://hub.docker.com/r/pihole/pihole/) created via Compose. Instances run `pihole-ami`, use volumes created from `pihole-snapshot`, and use the EFS file system `pihole-nfs`. Container logs are sent to CloudWatch using the Docker logging driver [awslogs](https://docs.docker.com/config/containers/logging/awslogs/).
+
+Pi-hole instances are launched from the auto-scaling group `pihole-asg`, which uses the launch template `pihole-template`. It is configured to launch t2.micro instances that run `pihole-ami`, use the key pair file `ursys.pem`, use the security group `pihole-CAN-sg`, and are assigned the IAM instance profile `pihole-logging-role`. `pihole-asg` launches instances into `pihole-ca-vpc` subnets `pihole-subnet-ca-central-1a` and `pihole-subnet-ca-central-1b`. The minimum, maximum, and desired number of instances are all two. `pihole-asg` is attached to the network load balancer `pihole-nlb` and the application load balancer `pihole-alb`.
+
+After being launched, traffic to instances is balanced by `pihole-nlb` and `pihole-alb`. `pihole-nlb` has cross-zone load balancing enabled and has two elastic IP addresses associated: `pihole-eip-1a` is attached to `pihole-nlb-node-1a` and holds the IPv4 address 15.156.33.54; `pihole-eip-1b` is attached to `pihole-nlb-node-1b` and holds 99.79.18.163. `pihole-nlb` listens for TCP traffic on port 80 as well as TCP and UDP traffic on port 53. Traffic on port 80 is forwarded to the ALB-type target group `pihole-tg-alb`, which directs traffic to `pihole-alb`. Traffic on port 53 is forwarded to the instance-type target group `pihole-tg-dns`, which is routed to instances. `pihole-alb` listens for HTTP traffic on port 80 and forwards it to `pihole-tg-http`, which is routed to instances. Sticky sessions are enabled for `pihole-tg-http` for ten minutes using the load balancer cookie type.
+
+
 
 ### Logging, IAM roles, and security groups
 
@@ -93,24 +95,23 @@ The Pi-hole architecture uses the security groups `pihole-CAN-sg`, `pihole-CAN-e
 
 - `pihole-CAN-sg`, used by Pi-hole instances, allows the following traffic:
 
-  - TCP:22 | 1.2.3.4/32 | Allows inbound SSH traffic from user IP
-  - UDP:53 | 1.2.3.4/32 | Allows inbound DNS (UDP) traffic from user IP
-  - TCP:53 | 1.2.3.4/32 | Allows inbound DNS (TCP) traffic from user IP
-  - UDP:53 | 10.0.0.0/16 | Allows local inbound DNS (UDP) traffic for NLB health checks
-  - TCP:53 | 10.0.0.0/16 | Allows local inbound DNS (TCP) traffic for NLB health checks
-  - TCP:80 | `pihole-alb-sg` | Allows inbound HTTP traffic from ALB security group for health checks
-  - TCP:2049 | `pihole-CAN-efs-sg` | Allows NFS traffic from EFS security group 
-  - All traffic | 0.0.0.0/0 | Allows all outbound IPv4 traffic
+  - TCP:22 | 1.2.3.4/32 | Allow inbound SSH traffic from user IP
+  - UDP:53 | 1.2.3.4/32 | Allow inbound DNS (UDP) traffic from user IP
+  - TCP:53 | 1.2.3.4/32 | Allow inbound DNS (TCP) traffic from user IP
+  - UDP:53 | 10.0.0.0/16 | Allow local inbound DNS (UDP) traffic for NLB health checks
+  - TCP:53 | 10.0.0.0/16 | Allow local inbound DNS (TCP) traffic for NLB health checks
+  - TCP:80 | `pihole-alb-sg` | Allow inbound HTTP traffic from ALB security group for health checks
+  - TCP:2049 | `pihole-CAN-efs-sg` | Allow inbound NFS traffic from EFS security group 
+  - All traffic | 0.0.0.0/0 | Allow all outbound IPv4 traffic
 
 - `pihole-CAN-efs-sg`, used by `pihole-nfs`, allows the following traffic:
 
-  - TCP:2049 | `pihole-CAN-sg` | Allows NFS traffic from instance security group
-
+  - TCP:2049 | `pihole-CAN-sg` | Allow NFS traffic from instance security group
 
 - `pihole-alb-sg`, used by `pihole-alb`, allows the following traffic:
 
-  - TCP:80 | 1.2.3.4/32 (Inbound only) | Allows inbound HTTP traffic from user IP address
-  - TCP:80 | `pihole-CAN-sg` | Allows inbound HTTP traffic from `pihole-CAN-sg`
+  - TCP:80 | 1.2.3.4/32 | Allow inbound HTTP traffic from user IP address
+  - TCP:80 | `pihole-CAN-sg` | Allow inbound HTTP traffic from `pihole-CAN-sg`
 
 ## Pricing
 
