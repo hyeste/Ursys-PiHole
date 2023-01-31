@@ -1,5 +1,5 @@
 # Ursys Pi-hole
-A containerised [Pi-hole  DNS sinkhole](https://github.com/pi-hole/pi-hole) arranged for Ursys LLC. This service and its surrounding architecture meet the following specifications: 
+A containerised [Pi-hole  DNS sinkhole](https://github.com/pi-hole/pi-hole) arranged for Ursys Consulting. This service and its surrounding architecture meet the following specifications: 
 
 - The Pi-Hole service is hosted in AWS
 - The Pi-Hole service runs from a container
